@@ -71,8 +71,13 @@ SPEED = 0.5  # meters per second (adjust based on your robot's actual speed)
 TURN_TIME = 0.5  # seconds to turn 90 degrees
 MOVE_DISTANCE = 0.5  # meters per move
 
+# Robot size parameters (adjust based on your robot's dimensions)
+ROBOT_WIDTH = 0.3  # meters (e.g., 30 cm width)
+SAFETY_DISTANCE = 0.3  # meters (50 cm safety buffer)
+
 # Global variable to store the latest waste level, initialized to None
 latest_waste_level = None
+
 def bin_level_callback(msg):
     global latest_waste_level
     latest_waste_level = msg.data
@@ -347,7 +352,7 @@ def motor_control():
                     rospy.logerr(f"Firebase status update failed: {e}")
                 rospy.loginfo(f"Reached target ({target_x}, {target_y}), stopping")
                 state = IDLE
-            elif distance_front < 20 and distance_front != 999:
+            elif distance_front < 50 and distance_front != 999:
                 state = AVOIDING
                 move_backward(MOVE_DISTANCE / SPEED)  # Move back 0.5 meters
                 rospy.loginfo("Obstacle detected, entering avoidance mode")
@@ -368,7 +373,7 @@ def motor_control():
             action_map = {"left": "turn_left", "right": "turn_right", "front": "forward"}
             action = "backward" if safest_distance < 20 else action_map[safest_direction]
 
-            if safest_distance < 20:
+            if safest_distance < SAFETY_DISTANCE:  # Use 50 cm safety buffer
                 move_backward(MOVE_DISTANCE / SPEED)  # Move back again if no safe path
                 state = AVOIDING  # Stay in avoidance mode
             else:
@@ -380,7 +385,7 @@ def motor_control():
                         turn_right()
                         state = AVOIDING
                     else:
-                        move_forward(MOVE_DISTANCE / SPEED)
+                        move_forward(MOVE_DISTANCE / SPEED / 2)
                         state = NAVIGATING
                 elif safest_direction == "right":
                     turn_right()
@@ -390,16 +395,16 @@ def motor_control():
                         turn_left()
                         state = AVOIDING
                     else:
-                        move_forward(MOVE_DISTANCE / SPEED)
+                        move_forward(MOVE_DISTANCE / SPEED / 2)  # Move forward half distance to maintain safety
                         state = NAVIGATING
                 else:
-                    move_forward(MOVE_DISTANCE / SPEED)
+                    move_forward(MOVE_DISTANCE / SPEED / 2)  # Move forward half distance to maintain safety
                     state = NAVIGATING
 
             # Update Q-table with the correct action
             state_idx = discretize_distance(distance_front)
             action_idx = actions.index(action)
-            reward = 1 if safest_distance >= 20 else -1
+            reward = 1 if safest_distance >= SAFETY_DISTANCE else -1
             next_distance = look_front()
             next_state = discretize_distance(next_distance)
             q_table[state_idx, action_idx] += alpha * (reward + gamma * np.max(q_table[next_state]) - q_table[state_idx, action_idx])
