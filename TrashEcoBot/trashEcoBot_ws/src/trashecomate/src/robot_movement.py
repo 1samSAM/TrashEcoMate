@@ -63,8 +63,11 @@ robot_y = 0.0  # Starting position (y-coordinate in meters)
 robot_angle = 0.0  # Orientation in degrees (0 = facing positive x-axis, 90 = positive y-axis)
 
 # Target location (e.g., bin location in the room)
-target_x = 2.0  # meters
+target_x = 1.0  # meters
 target_y = 1.0  # meters
+
+initial_x = 0.0  # meters
+initial_y = 0.0  # meters
 
 # Robot movement parameters
 SPEED = 0.5  # meters per second (adjust based on your robot's actual speed)
@@ -286,6 +289,7 @@ IDLE = 0
 NAVIGATING = 1
 AVOIDING = 2
 COLLECTING = 3
+RETURNING = 4
 
 
 
@@ -317,7 +321,7 @@ def motor_control():
                 except Exception as e:
                     rospy.logerr(f"Firebase status update failed: {e}")
                 continue
-            if waste_level > 90 and state != COLLECTING:
+            if waste_level > 90 and state != COLLECTING and state != RETURNING:
                 state = NAVIGATING
                 try:
                     status_ref.set("Active")
@@ -380,7 +384,7 @@ def motor_control():
                 if safest_direction == "left":
                     turn_left()
                     time.sleep(0.1)
-                    if look_front() < 20:
+                    if look_front() < SAFETY_DISTANCE:
                         turn_right()
                         turn_right()
                         state = AVOIDING
@@ -390,7 +394,7 @@ def motor_control():
                 elif safest_direction == "right":
                     turn_right()
                     time.sleep(0.1)
-                    if look_front() < 20:
+                    if look_front() < SAFETY_DISTANCE:
                         turn_left()
                         turn_left()
                         state = AVOIDING
@@ -411,7 +415,30 @@ def motor_control():
 
         elif state == COLLECTING:
             stop()
-            state = IDLE
+            state = RETURNING  # Transition to RETURNING after collecting
+            try:
+                status_ref.set("Returning")
+            except Exception as e:
+                rospy.logerr(f"Firebase status update failed: {e}")
+            rospy.loginfo("Waste collected, returning to initial location (0, 0)")
+
+        elif state == RETURNING:
+            remaining_distance = navigate_to_target(initial_x, initial_y)
+            distance_front = look_front()
+            rospy.loginfo(f"Distance to initial location: {remaining_distance:.2f} meters, Front distance: {distance_front:.2f} cm")
+            if remaining_distance < 0.1:
+                state = IDLE
+                try:
+                    status_ref.set("Idle")
+                except Exception as e:
+                    rospy.logerr(f"Firebase status update failed: {e}")
+                rospy.loginfo("Returned to initial location (0, 0), stopping")
+            elif distance_front < 50 and distance_front != 999:  # Increased to 50 cm for larger robot
+                state = AVOIDING
+                move_backward(MOVE_DISTANCE / SPEED)  # Move back 0.5 meters
+                rospy.loginfo("Obstacle detected, entering avoidance mode")
+            else:
+                move_forward(MOVE_DISTANCE / SPEED)  # Move forward if no obstacle
 
         elif state == IDLE:
             stop()
