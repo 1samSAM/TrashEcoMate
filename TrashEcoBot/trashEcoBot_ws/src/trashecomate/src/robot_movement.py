@@ -71,12 +71,12 @@ initial_y = 0.0  # meters
 
 # Robot movement parameters
 SPEED = 0.5  # meters per second (adjust based on your robot's actual speed)
-TURN_TIME = 0.5  # seconds to turn 90 degrees
+TURN_TIME = 0.95  # seconds to turn 90 degrees
 MOVE_DISTANCE = 0.5  # meters per move
 
 # Robot size parameters (adjust based on your robot's dimensions)
-ROBOT_WIDTH = 0.3  # meters (e.g., 30 cm width)
-SAFETY_DISTANCE = 0.3  # meters (50 cm safety buffer)
+ROBOT_WIDTH = 0.2  # meters (e.g., 30 cm width)
+SAFETY_DISTANCE = 0.2  # meters (50 cm safety buffer)
 
 # Global variable to store the latest waste level, initialized to None
 latest_waste_level = None
@@ -350,12 +350,8 @@ def motor_control():
                     rospy.loginfo("Waste collected, resetting waste level to 0%")
                 except Exception as e:
                     rospy.logerr(f"Failed to reset waste level in Firebase: {e}")
-                try:
-                    status_ref.set("Idle")
-                except Exception as e:
-                    rospy.logerr(f"Firebase status update failed: {e}")
-                rospy.loginfo(f"Reached target ({target_x}, {target_y}), stopping")
-                state = IDLE
+                rospy.loginfo(f"Reached target ({target_x}, {target_y}), transitioning to RETURNING")
+                state = RETURNING  # Transition to RETURNING without stopping
             elif distance_front < 50 and distance_front != 999:
                 state = AVOIDING
                 move_backward(MOVE_DISTANCE / SPEED)  # Move back 0.5 meters
@@ -375,9 +371,9 @@ def motor_control():
 
             # Map safest_direction to the corresponding action
             action_map = {"left": "turn_left", "right": "turn_right", "front": "forward"}
-            action = "backward" if safest_distance < 20 else action_map[safest_direction]
+            action = "backward" if safest_distance < SAFETY_DISTANCE else action_map[safest_direction]
 
-            if safest_distance < SAFETY_DISTANCE:  # Use 50 cm safety buffer
+            if safest_distance < SAFETY_DISTANCE:  # Use 30 cm safety buffer
                 move_backward(MOVE_DISTANCE / SPEED)  # Move back again if no safe path
                 state = AVOIDING  # Stay in avoidance mode
             else:
@@ -414,18 +410,19 @@ def motor_control():
             q_table[state_idx, action_idx] += alpha * (reward + gamma * np.max(q_table[next_state]) - q_table[state_idx, action_idx])
 
         elif state == COLLECTING:
-            stop()
+            # No stop() here to allow transition
             state = RETURNING  # Transition to RETURNING after collecting
             try:
                 status_ref.set("Returning")
             except Exception as e:
                 rospy.logerr(f"Firebase status update failed: {e}")
-            rospy.loginfo("Waste collected, returning to initial location (0, 0)")
+            rospy.loginfo("Waste collected, transitioning to RETURNING to initial location (0, 0)")
 
         elif state == RETURNING:
-            remaining_distance = navigate_to_target(initial_x, initial_y)
+            navigate_to_target(initial_x, initial_y)  # Ensure orientation is set
+            remaining_distance = math.sqrt((robot_x - initial_x)**2 + (robot_y - initial_y)**2)  # Recalculate distance
             distance_front = look_front()
-            rospy.loginfo(f"Distance to initial location: {remaining_distance:.2f} meters, Front distance: {distance_front:.2f} cm")
+            rospy.loginfo(f"Entering RETURNING state - Distance to initial location: {remaining_distance:.2f} meters, Front distance: {distance_front:.2f} cm, Position: ({robot_x:.2f}, {robot_y:.2f})")
             if remaining_distance < 0.1:
                 state = IDLE
                 try:
@@ -433,7 +430,7 @@ def motor_control():
                 except Exception as e:
                     rospy.logerr(f"Firebase status update failed: {e}")
                 rospy.loginfo("Returned to initial location (0, 0), stopping")
-            elif distance_front < 50 and distance_front != 999:  # Increased to 50 cm for larger robot
+            elif distance_front < 50 and distance_front != 999:
                 state = AVOIDING
                 move_backward(MOVE_DISTANCE / SPEED)  # Move back 0.5 meters
                 rospy.loginfo("Obstacle detected, entering avoidance mode")
